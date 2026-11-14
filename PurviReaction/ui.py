@@ -18,7 +18,7 @@ CLONE_PHOTO = "https://files.catbox.moe/rdfi4z.jpg"
 
 HELP_READ = """**• ᴄʟɪᴄᴋ ᴏɴ ᴛʜᴇ ʙᴜᴛᴛᴏɴs ʙᴇʟᴏᴡ ғᴏʀ ᴍᴏʀᴇ ɪɴғᴏʀᴍᴀᴛɪᴏɴ.  
 
-♦ ɪғ ʏᴏᴜ'ʀᴇ ғᴀᴄɪɴɢ ᴀɴʏ ᴘʀᴏʙʟᴇᴍ ʏᴏᴜ ᴄᴀɴ ᴀsᴋ ɪɴ [sᴜᴘᴘᴏʀᴛ ᴄʜᴀᴛ](https://t.me/PURVI_UPDATES).
+♦ ɪғ ʏᴏᴜ'ʀᴇ ғᴀᴄɪɴɢ ᴀɴʏ ᴘʀᴏʙʟᴇᴍ ʏᴏᴜ ᴄᴀɴ ᴀsᴋ ɪɴ [sᴜᴘᴘᴏʀᴛ ᴄʜᴀᴛ](https://t.me/offerkingdom).
 
 » ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs ᴄᴀɴ ʙᴇ ᴜsᴇᴅ ᴡɪᴛʜ : /**
 """
@@ -33,7 +33,7 @@ TOOLS_DATA_READ = """**<u>❖ ᴄᴏᴍᴍᴀɴᴅs ғᴏʀ ʀᴇᴀᴄᴛɪᴏ�
 ──────────────
 • /broadcast ᴛᴇxᴛ - sᴇɴᴅ ᴀ ᴍᴇssᴀɢᴇ ᴛᴏ ᴀʟʟ ᴄʜᴀᴛs ᴀɴᴅ ᴜsᴇʀs, ᴏʀ ʀᴇᴘʟʏ ᴛᴏ ᴀ ᴍᴇssᴀɢᴇ ᴡɪᴛʜ /broadcast ᴛᴏ ғᴏʀᴡᴀʀᴅ ɪᴛ ᴀs ɪᴛ ɪs (ʙᴏᴛ ᴏᴡɴᴇʀ ᴏɴʟʏ)
 ──────────────
-✦ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : [ᴘᴜʀᴠɪ ʙᴏᴛs](t.me/PURVI_BOTS)**
+✦ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : [ᴏғғᴇʀ ᴋɪɴɢᴅᴏᴍ](t.me/offerkingdom)**
 """
 
 ALPHA_READ = """**<u>❖ ᴄᴏᴍᴍᴀɴᴅs ғᴏʀ ᴄʟᴏɴᴇ ғᴇᴀᴛᴜʀᴇs :</u>
@@ -48,7 +48,7 @@ ALPHA_READ = """**<u>❖ ᴄᴏᴍᴍᴀɴᴅs ғᴏʀ ᴄʟᴏɴᴇ ғᴇᴀᴛ
 ──────────────
 • /delallclone - ʀᴇᴍᴏᴠᴇ ᴀʟʟ ᴄʟᴏɴᴇᴅ ʙᴏᴛs ᴏɴʟʏ ᴏᴡɴᴇʀ ᴜsᴇ ᴛʜɪs ᴄᴏᴍᴍᴀɴᴅ.
 ──────────────
-✦ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : [ᴘᴜʀᴠɪ ʙᴏᴛs](t.me/PURVI_BOTS)**
+✦ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : [ᴏғғᴇʀ ᴋɪɴɢᴅᴏᴍ](t.me/offerkingdom)**
 """
 
 
@@ -56,7 +56,7 @@ def start_caption(user):
     return (
         f"**✦ ʜᴇʏ {user.mention}!**\n**✦ ɪ'ᴍ ʏᴏᴜʀ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ !!**\n\n"
         "**• ɪ'ᴍ ʀᴇᴀᴄᴛ ᴛᴏ ᴇᴠᴇʀʏ ᴍᴇssᴀɢᴇ ɪɴ ɢʀᴏᴜᴘs, ᴄʜᴀɴɴᴇʟs & ᴘʀɪᴠᴀᴛᴇ ᴄʜᴀᴛs ᴡɪᴛʜ ᴀ ʀᴀɴᴅᴏᴍ ᴇᴍᴏᴊɪ..!!**\n\n"
-        "**✦ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : [⎯᪵፝֟፝֟⎯꯭𓆩꯭ ᴀ ꯭ʟ ꯭ᴘ ꯭ʜ꯭ ᴧ꯭⎯꯭꯭‌꯭🥂꯭༎꯭ 𓆪](t.me/TheSigmaCoder)**"
+        "**✦ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : [ᴏғғᴇʀ ᴋɪɴɢᴅᴏᴍ](t.me/offerkingdom)**"
     )
 
 
@@ -103,8 +103,8 @@ def start_buttons(client):
     return InlineKeyboardMarkup(
         add_button(client) + [
             [
-                Button("sᴜᴘᴘᴏʀᴛ", url="https://t.me/PURVI_BOTS"),
-                Button("sᴏᴜʀᴄᴇ", url="https://github.com/Im-NotCoder/Purvi-Reaction"),
+                Button("sᴜᴘᴘᴏʀᴛ", url="https://t.me/offerkingdom"),
+                Button("ᴜᴘᴅᴀᴛᴇs", url="https://t.me/offerkingdom"),
             ],
             [Button("⌯ ʜᴇʟᴘ & ᴄᴏᴍᴍᴀɴᴅs ⌯", callback_data="HELP")],
         ]
@@ -166,7 +166,7 @@ SET_HELP = """**<u>❖ Settings commands (group/channel admins) :</u>**
 • `/ignore` (reply) - ignore a user, `/unignore`
 • `/rstats` - reaction count
 ──────────────
-✦ Powered by : [Purvi Bots](t.me/PURVI_BOTS)"""
+✦ Powered by : [Offer Kingdom](t.me/offerkingdom)"""
 
 OWN_HELP = """**<u>❖ Bot owner tools :</u>**
 • `/setstart text` - custom start text ({mention} {name} {bot})
@@ -177,8 +177,9 @@ OWN_HELP = """**<u>❖ Bot owner tools :</u>**
 • `/ban` `/unban` `/banlist` - bot level
 • `/topchats` - top chats by reactions
 • `/myclone` - your clone validity
+• `/approve` `/unapprove` `/approved` `/approveall` - private mode chats
 ──────────────
-✦ Powered by : [Purvi Bots](t.me/PURVI_BOTS)"""
+✦ Powered by : [Offer Kingdom](t.me/offerkingdom)"""
 
 
 async def page_for(client, user, data):

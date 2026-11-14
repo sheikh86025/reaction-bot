@@ -18,7 +18,7 @@ from PurviReaction.rules import (
     chance_ok, choose, delay_value, keyword_match, msg_kind, next_counter,
 )
 from PurviReaction.utils import (
-    GROUPS, admin_ids, can_manage, get_tr, title_of,
+    GROUPS, admin_ids, can_manage, get_tr, is_private_main, title_of,
 )
 
 DEFAULT_POOL = default_pool(config.REACTIONS)
@@ -82,6 +82,12 @@ async def deliver(client, message, emoji, delay):
 @Client.on_message(filters.incoming & ~filters.service & ~filters.regex(r"^/"), group=1)
 async def react(client, message):
     bot_id = client.me.id
+    if (
+        is_private_main(client)
+        and message.chat.type != ChatType.PRIVATE
+        and not await db.is_approved(bot_id, message.chat.id)
+    ):
+        return
     cfg = await db.get_cfg(bot_id, message.chat.id)
     if not cfg["enabled"] or not await should_react(client, message, cfg):
         return

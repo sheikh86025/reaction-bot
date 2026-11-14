@@ -13,6 +13,8 @@ import config
 
 @Client.on_message(filters.incoming & filters.private, group=-2)
 async def must_join_channel(client, message):
+    if config.PRIVATE_MODE:
+        return
     channel = config.UPDATE_CHNL
     if not channel or not message.from_user:
         return

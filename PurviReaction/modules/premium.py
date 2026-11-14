@@ -52,7 +52,7 @@ async def check_expiry():
             await _notify(
                 c["user_id"],
                 f"⌛ **Your clone {name} has expired and was stopped.**\n"
-                "Contact @TheSigmaCoder to renew it.",
+                "Contact @offerkingdom to renew it.",
             )
             await _notify(config.OWNER_ID, f"⌛ Clone {name} expired (owner `{c['user_id']}`).")
         elif exp - now < DAY and not c.get("warned"):
@@ -60,7 +60,7 @@ async def check_expiry():
             await _notify(
                 c["user_id"],
                 f"⚠️ **Your clone {name} expires in less than 24 hours.**\n"
-                "Contact @TheSigmaCoder to renew it.",
+                "Contact @offerkingdom to renew it.",
             )
 
 

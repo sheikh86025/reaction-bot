@@ -17,15 +17,23 @@ BOT_TOKEN = getenv("BOT_TOKEN", None)
 MONGO_URL = getenv("MONGO_URL", None)
 
 DB_NAME = getenv("DB_NAME", "purvi")
-OWNER_ID = int(getenv("OWNER_ID", "7473021518"))
-UPDATE_CHNL = "PURVI_BOTS"
+OWNER_ID = int(getenv("OWNER_ID", "0"))
+if not OWNER_ID:
+    raise SystemExit("OWNER_ID is not set. Add your Telegram user id in the variables.")
+UPDATE_CHNL = "offerkingdom"
+
+# Private bot: only OWNER_ID (+ ALLOWED_USERS) can use it, only approved chats get reactions
+PRIVATE_MODE = getenv("PRIVATE_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
+ALLOWED_USERS = [
+    int(x) for x in getenv("ALLOWED_USERS", "").replace(",", " ").split() if x.lstrip("-").isdigit()
+]
 
 # Days a cloned bot stays active (0 = lifetime). Owner can extend with /premium
 CLONE_DAYS = int(getenv("CLONE_DAYS", "0"))
 
 REACTIONS = [
-    "👍", "👎", "❤️", "😂", "🤯", "😮", "🤔", "😢", "🔥", "❤️‍🔥", "🕊️", "🥰",
-    "🗿", "💯", "😎", "😁", "💋", "😱", "🤣", "😘", "👌", "🫡", "😍",
+    "👍", "❤️", "🔥", "🥰", "👏", "😁", "🎉", "🤩", "🙏", "👌",
+    "😍", "💯", "🤣", "⚡", "🏆", "💘", "😘", "😎", "🤗", "🆒",
 ]
 
 # ======================================================

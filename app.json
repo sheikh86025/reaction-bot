@@ -20,12 +20,22 @@
     "OWNER_ID": {
       "description": "Fill Here Your Owner User Id",
       "required": true,
-      "value": "7473021518"
+      "value": ""
     },
     "MONGO_URL": {
       "description": "Get a mongodb url from https://cloud.mongodb.com.",
       "required": true,
-      "value": "mongodb+srv://PurviBots:PublicMongo@cluster0.gy2adez.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+      "value": ""
+    },
+    "PRIVATE_MODE": {
+      "description": "true = only the owner (and ALLOWED_USERS) can use the bot",
+      "required": false,
+      "value": "true"
+    },
+    "ALLOWED_USERS": {
+      "description": "Extra user ids allowed to use the bot, separated by space or comma",
+      "required": false,
+      "value": ""
     },
     "CLONE_DAYS": {
       "description": "Days a cloned bot stays active (0 = lifetime)",

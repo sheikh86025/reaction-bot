@@ -27,6 +27,7 @@ chat_cfg = _db.chat_settings
 bot_cfg = _db.bot_settings
 bans = _db.banned_users
 rstats = _db.reaction_stats
+approved = _db.approved_chats
 
 _known_chats = set()
 _known_users = set()
@@ -35,6 +36,7 @@ _cfg = {}
 _bcfg = {}
 _bans = {}
 _pending = {}
+_approved = {}
 
 DEFAULT_TYPES = {
     "text": True, "photo": True, "video": True, "sticker": True,
@@ -66,6 +68,7 @@ async def setup():
     await bans.create_index([("bot_id", 1), ("user_id", 1)], unique=True)
     await rstats.create_index([("bot_id", 1), ("chat_id", 1)], unique=True)
     await rstats.create_index([("bot_id", 1), ("count", -1)])
+    await approved.create_index([("bot_id", 1), ("chat_id", 1)], unique=True)
 
 
 # ------------------------------------------------------------ served chats/users
@@ -154,7 +157,7 @@ async def update_clone(bot_id, **fields):
 
 async def delete_clone(bot_id):
     await clones.delete_many({"bot_id": bot_id})
-    for col in (chats, users, settings, chat_cfg, bot_cfg, bans, rstats):
+    for col in (chats, users, settings, chat_cfg, bot_cfg, bans, rstats, approved):
         await col.delete_many({"bot_id": bot_id})
     _known_chats.difference_update({k for k in _known_chats if k[0] == bot_id})
     _known_users.difference_update({k for k in _known_users if k[0] == bot_id})
@@ -165,6 +168,7 @@ async def delete_clone(bot_id):
     _off.pop(bot_id, None)
     _bcfg.pop(bot_id, None)
     _bans.pop(bot_id, None)
+    _approved.pop(bot_id, None)
 
 
 async def delete_all_clones():
@@ -326,3 +330,39 @@ async def top_chats(bot_id, limit=10):
 # 🔗 Source link : GitHub.com/Im-Notcoder/Purvi-Reaction
 # 📢 Telegram channel : t.me/Purvi_Bots
 # =======================================================
+
+
+# ------------------------------------------------------- approved chats (private mode)
+async def _appr(bot_id):
+    if bot_id not in _approved:
+        _approved[bot_id] = {d["chat_id"] async for d in approved.find({"bot_id": bot_id})}
+    return _approved[bot_id]
+
+
+async def is_approved(bot_id, chat_id):
+    return chat_id in await _appr(bot_id)
+
+
+async def approve_chat(bot_id, chat_id):
+    (await _appr(bot_id)).add(chat_id)
+    await approved.update_one(
+        {"bot_id": bot_id, "chat_id": chat_id},
+        {"$setOnInsert": {"at": int(time.time())}},
+        upsert=True,
+    )
+
+
+async def unapprove_chat(bot_id, chat_id):
+    (await _appr(bot_id)).discard(chat_id)
+    await approved.delete_one({"bot_id": bot_id, "chat_id": chat_id})
+
+
+async def get_approved(bot_id):
+    return sorted(await _appr(bot_id))
+
+
+async def approve_all_served(bot_id):
+    ids = await get_chats(bot_id)
+    for chat_id in ids:
+        await approve_chat(bot_id, chat_id)
+    return len(ids)

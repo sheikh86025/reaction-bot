@@ -11,11 +11,22 @@ import time
 from pyrogram.enums import ChatMemberStatus, ChatMembersFilter, ChatType
 
 import config
+from PurviReaction import app
 from PurviReaction import database as db
 from PurviReaction.fonts import Tr
 
 GROUPS = (ChatType.GROUP, ChatType.SUPERGROUP)
 _ADMINS = {}
+
+
+def is_allowed_user(user_id):
+    """Owner or someone the owner allowed (ALLOWED_USERS)."""
+    return user_id == config.OWNER_ID or user_id in config.ALLOWED_USERS
+
+
+def is_private_main(client):
+    """True when this is the main bot and PRIVATE_MODE is on."""
+    return bool(config.PRIVATE_MODE and app.me and client.me.id == app.me.id)
 
 
 async def is_bot_owner(bot_id, user_id):

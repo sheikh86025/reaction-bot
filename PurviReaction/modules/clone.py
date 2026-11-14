@@ -18,7 +18,7 @@ from pyrogram.types import BotCommand, InlineKeyboardButton, InlineKeyboardMarku
 import config
 from PurviReaction import CLONE_PLUGINS, LOGGER
 from PurviReaction import database as db
-from PurviReaction.utils import chunk_lines
+from PurviReaction.utils import chunk_lines, is_allowed_user
 
 TOKEN_RE = re.compile(r"\d+:[\w-]{30,}")
 RUNNING = {}
@@ -120,6 +120,8 @@ async def clone_bot(client, message):
         )
     if not message.from_user:
         return
+    if config.PRIVATE_MODE and not is_allowed_user(message.from_user.id):
+        return await message.reply_text("**🔒 ᴛʜɪs ɪs ᴀ ᴘʀɪᴠᴀᴛᴇ ʙᴏᴛ. ᴄʟᴏɴɪɴɢ ɪs ᴅɪsᴀʙʟᴇᴅ.**")
     token = message.command[1].strip()
     if not TOKEN_RE.fullmatch(token):
         return await message.reply_text("❌ **ɪɴᴠᴀʟɪᴅ ʙᴏᴛ ᴛᴏᴋᴇɴ. ᴘʟᴇᴀsᴇ ᴘʀᴏᴠɪᴅᴇ ᴀ ᴠᴀʟɪᴅ ᴏɴᴇ.**")
@@ -128,7 +130,7 @@ async def clone_bot(client, message):
     existing = None if bot_id == client.me.id else await db.get_clone(bot_id)
     if existing and existing.get("expired"):
         return await message.reply_text(
-            "**⌛ ᴛʜɪs ᴄʟᴏɴᴇ ʜᴀs ᴇxᴘɪʀᴇᴅ.**\n**ᴄᴏɴᴛᴀᴄᴛ @TheSigmaCoder ᴛᴏ ʀᴇɴᴇᴡ ɪᴛ.**"
+            "**⌛ ᴛʜɪs ᴄʟᴏɴᴇ ʜᴀs ᴇxᴘɪʀᴇᴅ.**\n**ᴄᴏɴᴛᴀᴄᴛ @offerkingdom ᴛᴏ ʀᴇɴᴇᴡ ɪᴛ.**"
         )
     if bot_id == client.me.id or bot_id in RUNNING or existing:
         return await message.reply_text("**🤖 ʏᴏᴜʀ ʙᴏᴛ ɪs ᴀʟʀᴇᴀᴅʏ ᴄʟᴏɴᴇᴅ ✅**")
@@ -142,7 +144,7 @@ async def clone_bot(client, message):
         LOGGER.exception("Error while cloning bot.")
         return await status.edit_text(
             f"⚠️ <b>ᴇʀʀᴏʀ :</b>\n\n<code>{e}</code>\n\n"
-            "📩 **ғᴏʀᴡᴀʀᴅ ᴛʜɪs ᴍᴇssᴀɢᴇ ᴛᴏ @TheSigmaCoder ғᴏʀ ᴀssɪsᴛᴀɴᴄᴇ.**"
+            "📩 **ғᴏʀᴡᴀʀᴅ ᴛʜɪs ᴍᴇssᴀɢᴇ ᴛᴏ @offerkingdom ғᴏʀ ᴀssɪsᴛᴀɴᴄᴇ.**"
         )
 
     me = clone.me

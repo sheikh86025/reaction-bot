@@ -69,7 +69,7 @@ async def stats(client, message):
         f"💾 **ʀᴀᴍ ᴜꜱᴀɢᴇ :** {ram}%\n"
         f"🖥 **ᴄᴘᴜ ᴜꜱᴀɢᴇ :** {cpu}%", 
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✨ ᴊᴏɪɴ ᴄʜᴀɴɴᴇʟ", url="https://t.me/Purvi_Bots")]]
+            [[InlineKeyboardButton("✨ ᴊᴏɪɴ ᴄʜᴀɴɴᴇʟ", url="https://t.me/offerkingdom")]]
         ),
     )
 
