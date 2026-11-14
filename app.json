@@ -1,0 +1,41 @@
+{
+  "name": "Reaction-Bot",
+  "description": "A Telegram reaction bot built with Pyrogram that auto-reacts to messages in groups and channels. Uses MongoDB to store settings and supports easy Heroku deployment.",
+  "logo": "https://files.catbox.moe/xqoarb.jpg",
+  "keywords": [
+    "reactionbot",
+    "mongodb",
+    "python",
+    "purvibots"
+  ],
+  "buildpacks": [{
+    "url": "heroku/python"
+  }],
+  "env": {
+    "BOT_TOKEN": {
+      "description": "A Bot token from @BotFather",
+      "required": true,
+      "value": ""
+    },
+    "OWNER_ID": {
+      "description": "Fill Here Your Owner User Id",
+      "required": true,
+      "value": "7473021518"
+    },
+    "MONGO_URL": {
+      "description": "Get a mongodb url from https://cloud.mongodb.com.",
+      "required": true,
+      "value": "mongodb+srv://PurviBots:PublicMongo@cluster0.gy2adez.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+    },
+    "CLONE_DAYS": {
+      "description": "Days a cloned bot stays active (0 = lifetime)",
+      "required": false,
+      "value": "0"
+    },
+    "DB_NAME": {
+      "description": "Name of the MongoDB database used by the bot",
+      "required": false,
+      "value": "purvi"
+    }
+  }
+}
