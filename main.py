@@ -180,41 +180,96 @@ async def send(message, emoji):
     return False
 
 
-async def do_react(message, emojis):
-    for emoji in emojis:
-        try:
-            if await send(message, emoji):
+class NoReaction(Exception):
+    """The chat refused every emoji (message shown to the owner)."""
+
+
+_ALLOWED = {}  # chat -> (time, None = anything / [] = reactions off / [emojis])
+
+
+def cached(chat):
+    hit = _ALLOWED.get(chat)
+    return (True, hit[1]) if hit and time.time() - hit[0] < 600 else (False, None)
+
+
+async def allowed_reactions(client, chat):
+    """Emojis the chat allows: None = anything (or unknown), [] = reactions are off."""
+    known, res = cached(chat)
+    if known:
+        return res
+    try:
+        ar = (await client.get_chat(chat)).available_reactions
+    except Exception:
+        return None
+    if ar is None:
+        res = []
+    elif getattr(ar, "all_are_enabled", False):
+        res = None
+    else:
+        res = [e.replace(VS16, "") for e in (getattr(r, "emoji", None) for r in ar.reactions or []) if e]
+    if len(_ALLOWED) > 500:
+        _ALLOWED.clear()
+    _ALLOWED[chat] = (time.time(), res)
+    return res
+
+
+def fit(allowed, idx, bots, source=None):
+    """Our emojis that the chat allows, rotated per bot (max 3)."""
+    ours = list(dict.fromkeys(e for e in list(source or pool) + POSITIVE if e in allowed))
+    if not ours:
+        return []
+    k = idx % len(ours)
+    return (ours[k:] + ours[:k])[:3]
+
+
+async def do_react(client, message, emojis):
+    tried = set()
+    for attempt in range(2):  # 2nd round uses the emojis the chat really allows
+        for emoji in emojis:
+            tried.add(emoji)
+            try:
+                if await send(message, emoji):
+                    return
+            except errors.FloodWait as e:
+                if e.value <= 30:
+                    await asyncio.sleep(e.value)
+                    try:
+                        await send(message, emoji)
+                    except Exception:
+                        pass
                 return
-        except errors.FloodWait as e:
-            if e.value <= 30:
-                await asyncio.sleep(e.value)
-                try:
-                    await send(message, emoji)
-                except Exception:
-                    pass
-            return
-        except Exception as e:  # deleted message, no rights, ...
-            LOG.debug("react failed: %s", e)
+            except Exception as e:  # deleted message, no rights, ...
+                LOG.debug("react failed: %s", e)
+                return
+        allowed = await allowed_reactions(client, message.chat.id) if attempt == 0 else None
+        emojis = [e for e in fit(allowed, client.idx, len(TOKENS)) if e not in tried] if allowed else []
+        if not emojis:
             return
 
 
-async def react_later(message, emojis):
+async def react_later(client, message, emojis):
     await asyncio.sleep(random.uniform(dmin, max(dmin, dmax)))
-    await do_react(message, emojis)
+    await do_react(client, message, emojis)
 
 
 async def on_message(client, message):
-    if message.chat.id in off:
+    chat = message.chat.id
+    if chat in off:
         return
-    emojis = pick(message.chat.id, message.id, client.idx, len(TOKENS))
+    known, allowed = cached(chat)
+    if known and allowed == []:  # reactions are switched off in this chat
+        return
+    emojis = pick(chat, message.id, client.idx, len(TOKENS))
     if not emojis:
         return
+    if known and allowed:
+        emojis = [e for e in emojis if e in allowed] or fit(allowed, client.idx, len(TOKENS))
     if dmax > 0:  # wait in the background so the bot can keep reading new messages
-        task = asyncio.create_task(react_later(message, emojis))
+        task = asyncio.create_task(react_later(client, message, emojis))
         _TASKS.add(task)
         task.add_done_callback(_TASKS.discard)
     else:
-        await do_react(message, emojis)
+        await do_react(client, message, emojis)
 
 
 async def guard(client, update):
@@ -428,23 +483,37 @@ async def cmd_onoff(client, message):
     await message.reply_text(f"✅ **Reactions {'ON' if turn_on else 'OFF'} for** `{chat_id}`")
 
 
-async def react_link(client, chat, msg_id, emojis):
-    """Put one reaction on a post (needs the bot to be inside that chat)."""
+async def put(client, chat, msg_id, emoji):
+    """One reaction on a post. True = done, False = Telegram refused this emoji."""
+    for form in (emoji, ALT.get(emoji)):
+        if not form:
+            continue
+        for attempt in range(2):
+            try:
+                await client.send_reaction(chat_id=chat, message_id=msg_id, emoji=form)
+                return True
+            except INVALID:
+                break
+            except errors.FloodWait as e:
+                if attempt or e.value > 30:
+                    raise
+                await asyncio.sleep(e.value)
+    return False
+
+
+async def react_link(client, chat, msg_id, emojis, source=None):
     for emoji in emojis:
-        for form in (emoji, ALT.get(emoji)):
-            if not form:
-                continue
-            for attempt in range(2):
-                try:
-                    await client.send_reaction(chat_id=chat, message_id=msg_id, emoji=form)
-                    return emoji
-                except INVALID:
-                    break
-                except errors.FloodWait as e:
-                    if attempt or e.value > 30:
-                        raise
-                    await asyncio.sleep(e.value)
-    raise ValueError("ReactionInvalid")
+        if await put(client, chat, msg_id, emoji):
+            return emoji
+    allowed = await allowed_reactions(client, chat)  # ask the chat what it allows
+    if allowed == []:
+        raise NoReaction("reactions are turned off in that chat")
+    if allowed:
+        for emoji in fit(allowed, client.idx, len(TOKENS), source):
+            if emoji not in emojis and await put(client, chat, msg_id, emoji):
+                return emoji
+        raise NoReaction("that chat allows only " + show(allowed[:10]))
+    raise NoReaction("Telegram refused these emojis")
 
 
 async def cmd_link(client, message):
@@ -452,19 +521,20 @@ async def cmd_link(client, message):
     if not links:
         return
     custom = extract(LINK_RE.sub(" ", message.text))  # emojis written next to the link
-    lines = []
+    lines, hard = [], False
     for chat, msg_id in links:
         ok, errs = 0, []
         for bot in CLIENTS:
             emojis = pick(chat, msg_id, bot.idx, len(TOKENS), force=True, source=custom)
             try:
-                await react_link(bot, chat, msg_id, emojis)
+                await react_link(bot, chat, msg_id, emojis, custom or None)
                 ok += 1
             except Exception as e:
-                errs.append(f"Bot {bot.idx + 1}: {type(e).__name__}")
+                errs.append(f"Bot {bot.idx + 1}: {e if isinstance(e, NoReaction) else type(e).__name__}")
+                hard = hard or not isinstance(e, NoReaction)
         lines.append(f"{'✅' if ok else '❌'} `{chat}/{msg_id}` → {ok}/{len(CLIENTS)} bots")
         lines += [f"   ⚠️ {x}" for x in errs[:3]]
-    if any(line.startswith("   ⚠️") for line in lines):
+    if hard:
         lines.append("\nBots must be members/admins of that chat. For private channel links the bot must have seen a message there since the last restart.")
     await message.reply_text("\n".join(lines))
 
