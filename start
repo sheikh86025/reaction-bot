@@ -1,1 +1,4 @@
-python3 -m PurviReaction
+#!/bin/bash
+# Compatibility: lets the old start command `bash start` run the new bot.
+cd "$(dirname "$0")" || exit 1
+exec python3 main.py

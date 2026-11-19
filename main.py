@@ -9,6 +9,7 @@ import logging
 import os
 import random
 import re
+import time
 
 try:  # faster event loop = less CPU
     import uvloop
@@ -21,7 +22,9 @@ LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
 
 from pyrogram import Client, enums, errors, filters, idle  # noqa: E402
-from pyrogram.handlers import ChatMemberUpdatedHandler, MessageHandler  # noqa: E402
+from pyrogram.handlers import CallbackQueryHandler, ChatMemberUpdatedHandler, MessageHandler  # noqa: E402
+from pyrogram.types import InlineKeyboardButton as Btn  # noqa: E402
+from pyrogram.types import InlineKeyboardMarkup as Markup  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("reactbot")
@@ -255,7 +258,8 @@ def info():
         f"**Chance :** {chance}%\n"
         f"**Delay :** {delay_text()}\n"
         f"**Chats switched off :** {len(off)}\n\n"
-        "`/setemoji 🔥 ❤️ 👍 🎉` - set your emojis\n"
+        "`/emoji` - **tap to choose** your emojis\n"
+        "`/setemoji 🔥 ❤️ 👍 🎉` - or type them\n"
         "`/resetemoji` - back to default\n"
         "`/emojis` - all emojis Telegram allows\n"
         "`/chance 50` - react on 50% of the messages\n"
@@ -275,11 +279,13 @@ async def cmd_set(client, message):
     global pool
     parts = (message.text or "").split(None, 1)
     emojis = extract(parts[1]) if len(parts) > 1 else []
-    if not emojis:
+    if not emojis and len(parts) > 1:
         return await message.reply_text(
-            "Send emojis after the command.\n**Example :** `/setemoji 🔥 ❤️ 👍 🎉`\n"
-            "All allowed emojis : /emojis"
+            "No allowed emoji found.\n**Example :** `/setemoji 🔥 ❤️ 👍 🎉`\n"
+            "Or tap them : /emoji"
         )
+    if not emojis:
+        return await cmd_panel(client, message)
     pool = emojis
     note = "" if await persist() else "\n\n⚠️ Not saved permanently (set `MONGO_URL` to keep it after restart)."
     await message.reply_text(f"✅ **Saved {len(emojis)} emoji(s) :** {show(emojis)}{note}")
@@ -314,6 +320,87 @@ async def cmd_delay(client, message):
     dmin, dmax = min(nums), max(nums)
     await persist()
     await message.reply_text(f"✅ **Delay :** {delay_text()}")
+
+
+PAGE, ROW = 42, 7
+
+
+def emoji_markup(page=0):
+    pages = (len(ALLOWED) + PAGE - 1) // PAGE
+    page = max(0, min(page, pages - 1))
+    chosen = set(pool)
+    items = list(enumerate(ALLOWED))[page * PAGE:(page + 1) * PAGE]
+    rows = [
+        [Btn(ALT.get(e, e) + ("✔" if e in chosen else ""), callback_data=f"EM:t:{i}:{page}")
+         for i, e in items[k:k + ROW]]
+        for k in range(0, len(items), ROW)
+    ]
+    nav = [Btn("⬅️", callback_data=f"EM:p:{page - 1}")] if page > 0 else []
+    nav.append(Btn(f"{page + 1}/{pages}", callback_data="EM:n"))
+    if page < pages - 1:
+        nav.append(Btn("➡️", callback_data=f"EM:p:{page + 1}"))
+    rows.append(nav)
+    rows.append([Btn("✨ Positive set", callback_data=f"EM:a:{page}"),
+                 Btn("↩️ Default", callback_data=f"EM:r:{page}")])
+    rows.append([Btn("✅ Done", callback_data="EM:d")])
+    return Markup(rows)
+
+
+def emoji_text():
+    return (
+        "**😀 Choose reaction emojis**\n\n"
+        "Tap an emoji to select / unselect it. ✔ = selected.\n"
+        f"**Selected ({len(pool)}) :** {show(pool)}\n\nTap **Done** to save."
+    )
+
+
+async def cmd_panel(client, message):
+    await message.reply_text(emoji_text(), reply_markup=emoji_markup(0))
+
+
+async def cb_emoji(client, query):
+    global pool
+    parts = query.data.split(":")
+    act, page = parts[1], 0
+    if act == "n":
+        return await query.answer()
+    if act == "d":
+        note = "" if await persist() else "\n\n⚠️ Not saved permanently (set `MONGO_URL`)."
+        await query.message.edit_text(f"✅ **Saved {len(pool)} emoji(s) :** {show(pool)}{note}")
+        return await query.answer()
+    if act == "t":
+        e, page = ALLOWED[int(parts[2])], int(parts[3])
+        if e in pool:
+            if len(pool) == 1:
+                return await query.answer("Keep at least one emoji.", show_alert=True)
+            pool = [x for x in pool if x != e]
+        else:
+            pool = pool + [e]
+    elif act == "p":
+        page = int(parts[2])
+    elif act == "a":
+        pool, page = list(POSITIVE), int(parts[2])
+    elif act == "r":
+        pool, page = list(DEFAULT_POOL), int(parts[2])
+    await query.answer()
+    try:
+        await query.message.edit_text(emoji_text(), reply_markup=emoji_markup(page))
+    except errors.MessageNotModified:
+        pass
+
+
+_NOTICED = {}
+
+
+async def private_notice(client, message):
+    """Strangers get one short line (max once an hour each), nothing else."""
+    now, uid = time.time(), message.from_user.id if message.from_user else 0
+    if now - _NOTICED.get(uid, 0) < 3600:
+        return
+    if len(_NOTICED) > 1000:
+        _NOTICED.clear()
+    _NOTICED[uid] = now
+    await message.reply_text("🔒 This is a private bot. Only the owner can use it.")
 
 
 async def resolve_chat(client, arg):
@@ -394,6 +481,9 @@ def attach(client, idx):
         add = client.add_handler
         add(MessageHandler(cmd_info, filters.command(["start", "help", "emojis"]) & dm))
         add(MessageHandler(cmd_set, filters.command("setemoji") & dm))
+        add(MessageHandler(cmd_panel, filters.command("emoji") & dm))
+        add(CallbackQueryHandler(cb_emoji, filters.regex(r"^EM:") & me))
+        add(MessageHandler(private_notice, filters.private & ~me))
         add(MessageHandler(cmd_reset, filters.command("resetemoji") & dm))
         add(MessageHandler(cmd_chance, filters.command("chance") & dm))
         add(MessageHandler(cmd_delay, filters.command("delay") & dm))

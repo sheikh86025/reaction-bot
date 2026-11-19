@@ -8,5 +8,5 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY --from=build /install /usr/local
 WORKDIR /app
-COPY main.py .
-CMD ["python", "main.py"]
+COPY . .
+CMD ["python3", "main.py"]
