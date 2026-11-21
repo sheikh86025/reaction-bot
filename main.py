@@ -2,7 +2,7 @@
 
 Required variables : BOT_TOKEN, OWNER_ID
 Optional variables : EXTRA_BOT_TOKENS (more bots = more reactions per message),
-                     EMOJIS, MONGO_URL, DB_NAME, PRIVATE_MODE, API_ID, API_HASH
+                     EMOJIS, ALLOWED_USERS, MONGO_URL, DB_NAME, PRIVATE_MODE, API_ID, API_HASH
 """
 import asyncio
 import logging
@@ -39,6 +39,7 @@ TOKENS = [
 ]
 MONGO_URL = os.getenv("MONGO_URL")
 PRIVATE_MODE = os.getenv("PRIVATE_MODE", "true").strip().lower() in ("1", "true", "yes", "on")
+ENV_ALLOWED = {int(x) for x in os.getenv("ALLOWED_USERS", "").replace(",", " ").split() if x.lstrip("-").isdigit()}
 
 if not OWNER_ID or not TOKENS:
     raise SystemExit("Set BOT_TOKEN and OWNER_ID in the variables.")
@@ -93,6 +94,41 @@ chance = 100         # % of messages that get a reaction
 dmin = dmax = 0      # random delay (seconds) before reacting
 CLIENTS = []         # running bots
 _TASKS = set()
+chat_emojis = {}     # chat id -> that chat's own emoji list
+co_owners = set(ENV_ALLOWED)  # extra users who may use the bot (the owner is always allowed)
+stats = {"total": 0, "bots": {}, "chats": {}, "titles": {}}
+STARTED = time.time()
+dirty = False        # stats changed since the last save
+GAP = 1.1            # seconds between posts when reacting on many posts
+
+
+def is_admin_id(uid):
+    return uid == OWNER_ID or uid in co_owners
+
+
+async def _admin_filter(_, __, update):
+    user = getattr(update, "from_user", None)
+    return bool(user and is_admin_id(user.id))
+
+
+ADMIN = filters.create(_admin_filter)   # owner + co-owners
+OWNER = filters.user(OWNER_ID)          # owner only
+
+
+def bump(bot, chat, title=None):
+    """Count one reaction (saved every few minutes)."""
+    global dirty
+    c, b = str(chat), str(bot.idx)
+    stats["total"] += 1
+    stats["bots"][b] = stats["bots"].get(b, 0) + 1
+    stats["chats"][c] = stats["chats"].get(c, 0) + 1
+    if title:
+        stats["titles"][c] = str(title)[:40]
+    if len(stats["chats"]) > 1500:
+        for key in sorted(stats["chats"], key=stats["chats"].get)[:200]:
+            stats["chats"].pop(key, None)
+            stats["titles"].pop(key, None)
+    dirty = True
 
 # ------------------------------------------- optional MongoDB (only to remember settings)
 _col = None
@@ -117,13 +153,23 @@ def _load():
         LOG.warning("MongoDB read failed: %s", e)
 
 
-def _save():
+def snapshot():
+    """Copy of everything we remember (taken on the main thread, so saving is safe)."""
+    return {
+        "list": list(pool), "off": sorted(off), "chance": chance, "dmin": dmin, "dmax": dmax,
+        "chat_emojis": {str(k): list(v) for k, v in chat_emojis.items()},
+        "co_owners": sorted(co_owners - ENV_ALLOWED),
+        "stats": {"total": stats["total"], "bots": dict(stats["bots"]),
+                  "chats": dict(stats["chats"]), "titles": dict(stats["titles"])},
+    }
+
+
+def _save(data=None):
     try:
         col = _collection()
         if col is None:
             return False
-        data = {"list": pool, "off": sorted(off), "chance": chance, "dmin": dmin, "dmax": dmax}
-        col.update_one({"_id": "emojis"}, {"$set": data}, upsert=True)
+        col.update_one({"_id": "emojis"}, {"$set": data or snapshot()}, upsert=True)
         return True
     except Exception as e:
         LOG.warning("MongoDB write failed: %s", e)
@@ -131,15 +177,22 @@ def _save():
 
 
 def apply(doc):
-    global pool, off, chance, dmin, dmax
+    global pool, off, chance, dmin, dmax, chat_emojis, co_owners
     pool = [e for e in doc.get("list", []) if e in ALLOWED] or pool
     off = set(doc.get("off", []))
     chance = int(doc.get("chance", 100))
     dmin, dmax = doc.get("dmin", 0), doc.get("dmax", 0)
+    chat_emojis = {int(k): v for k, v in (doc.get("chat_emojis") or {}).items()
+                   if [e for e in v if e in ALLOWED]}
+    co_owners = set(ENV_ALLOWED) | set(doc.get("co_owners", []))
+    st = doc.get("stats") or {}
+    stats["total"] = int(st.get("total", 0))
+    for key in ("bots", "chats", "titles"):
+        stats[key] = dict(st.get(key) or {})
 
 
 async def persist():
-    return await asyncio.to_thread(_save) if MONGO_URL else False
+    return await asyncio.to_thread(_save, snapshot()) if MONGO_URL else False
 
 
 # ------------------------------------------------------------------ reacting
@@ -158,7 +211,7 @@ def pick(chat_id, msg_id, idx, bots, n_tries=3, force=False, source=None):
     rnd = random.Random(f"{chat_id}:{msg_id}")
     if not force and chance < 100 and rnd.random() * 100 >= chance:
         return []
-    order = list(source or pool)
+    order = list(source or chat_emojis.get(chat_id) or pool)
     rnd.shuffle(order)
     out = []
     for k in range(n_tries):
@@ -182,6 +235,10 @@ async def send(message, emoji):
 
 class NoReaction(Exception):
     """The chat refused every emoji (message shown to the owner)."""
+
+    def __init__(self, text, hard=True):
+        super().__init__(text)
+        self.hard = hard   # False = only this post refused (e.g. a service message)
 
 
 _ALLOWED = {}  # chat -> (time, None = anything / [] = reactions off / [emojis])
@@ -229,12 +286,13 @@ async def do_react(client, message, emojis):
             tried.add(emoji)
             try:
                 if await send(message, emoji):
-                    return
+                    return bump(client, message.chat.id, message.chat.title)
             except errors.FloodWait as e:
                 if e.value <= 30:
                     await asyncio.sleep(e.value)
                     try:
-                        await send(message, emoji)
+                        if await send(message, emoji):
+                            bump(client, message.chat.id, message.chat.title)
                     except Exception:
                         pass
                 return
@@ -242,7 +300,8 @@ async def do_react(client, message, emojis):
                 LOG.debug("react failed: %s", e)
                 return
         allowed = await allowed_reactions(client, message.chat.id) if attempt == 0 else None
-        emojis = [e for e in fit(allowed, client.idx, len(TOKENS)) if e not in tried] if allowed else []
+        emojis = [e for e in fit(allowed, client.idx, len(TOKENS), chat_emojis.get(message.chat.id))
+                  if e not in tried] if allowed else []
         if not emojis:
             return
 
@@ -263,7 +322,7 @@ async def on_message(client, message):
     if not emojis:
         return
     if known and allowed:
-        emojis = [e for e in emojis if e in allowed] or fit(allowed, client.idx, len(TOKENS))
+        emojis = [e for e in emojis if e in allowed] or fit(allowed, client.idx, len(TOKENS), chat_emojis.get(chat))
     if dmax > 0:  # wait in the background so the bot can keep reading new messages
         task = asyncio.create_task(react_later(client, message, emojis))
         _TASKS.add(task)
@@ -279,7 +338,7 @@ async def guard(client, update):
         return
     if new.status in IN_CHAT and not (old and old.status in IN_CHAT):
         adder = update.from_user
-        if adder and adder.id != OWNER_ID:
+        if adder and not is_admin_id(adder.id):
             try:
                 await client.leave_chat(update.chat.id)
             except Exception:
@@ -310,17 +369,21 @@ def info():
         "🤖 **Reaction bot**\n\n"
         f"**Emojis ({len(pool)}) :** {show(pool)}\n"
         f"**Bots reacting :** {len(TOKENS)} (each bot adds 1 reaction per message)\n"
-        f"**Chance :** {chance}%\n"
-        f"**Delay :** {delay_text()}\n"
-        f"**Chats switched off :** {len(off)}\n\n"
-        "`/emoji` - **tap to choose** your emojis\n"
-        "`/setemoji 🔥 ❤️ 👍 🎉` - or type them\n"
-        "`/resetemoji` - back to default\n"
-        "`/emojis` - all emojis Telegram allows\n"
-        "`/chance 50` - react on 50% of the messages\n"
-        "`/delay 1 5` - wait 1 to 5 seconds first (`/delay 0` = off)\n"
-        "`/off` and `/on` - inside a group, or in DM: `/off chat_id` | `/off @username` | `/off post_link`\n\n"
-        "📎 **Send me a post link** (t.me/channel/123) and all bots react on that post."
+        f"**Chance :** {chance}%  •  **Delay :** {delay_text()}\n"
+        f"**Chats off :** {len(off)}  •  **Chats with own emojis :** {len(chat_emojis)}\n\n"
+        "**Emojis**\n"
+        "`/emoji` - tap to choose (all chats)\n"
+        "`/setemoji 🔥 ❤️ 👍` - or type them  •  `/resetemoji`\n"
+        "`/chatemoji` - own emojis for ONE chat (in the chat, or DM: `/chatemoji @name`)\n"
+        "`/chatemojis` - chats that have own emojis  •  `/emojis` - all allowed\n\n"
+        "**Control**\n"
+        "`/chance 50`  •  `/delay 1 5`  •  `/off` `/on` (in a chat, or DM + id/@name/link)\n"
+        "`/stats` - reactions done\n\n"
+        "**Posts**\n"
+        "Send a post link - all bots react on it\n"
+        "`/last post_link 10` - react on that post and the 9 before it\n"
+        "`/remove post_link 10` - remove the bots' reactions from them\n\n"
+        "**Co-owners** (owner only): `/allow user_id` • `/disallow user_id` • `/allowed`"
     )
 
 
@@ -380,32 +443,49 @@ async def cmd_delay(client, message):
 PAGE, ROW = 42, 7
 
 
-def emoji_markup(page=0):
+def get_list(scope):
+    return pool if scope == "g" else (chat_emojis.get(scope) or pool)
+
+
+def set_list(scope, emojis):
+    """scope 'g' = every chat, a chat id = that chat only (None = back to the main list)."""
+    global pool
+    if scope == "g":
+        pool = emojis
+    elif emojis is None:
+        chat_emojis.pop(scope, None)
+    else:
+        chat_emojis[scope] = emojis
+
+
+def emoji_markup(page=0, scope="g"):
     pages = (len(ALLOWED) + PAGE - 1) // PAGE
     page = max(0, min(page, pages - 1))
-    chosen = set(pool)
+    chosen = set(get_list(scope))
     items = list(enumerate(ALLOWED))[page * PAGE:(page + 1) * PAGE]
     rows = [
-        [Btn(ALT.get(e, e) + ("✔" if e in chosen else ""), callback_data=f"EM:t:{i}:{page}")
+        [Btn(ALT.get(e, e) + ("✔" if e in chosen else ""), callback_data=f"EM:{scope}:t:{i}:{page}")
          for i, e in items[k:k + ROW]]
         for k in range(0, len(items), ROW)
     ]
-    nav = [Btn("⬅️", callback_data=f"EM:p:{page - 1}")] if page > 0 else []
-    nav.append(Btn(f"{page + 1}/{pages}", callback_data="EM:n"))
+    nav = [Btn("⬅️", callback_data=f"EM:{scope}:p:{page - 1}")] if page > 0 else []
+    nav.append(Btn(f"{page + 1}/{pages}", callback_data=f"EM:{scope}:n"))
     if page < pages - 1:
-        nav.append(Btn("➡️", callback_data=f"EM:p:{page + 1}"))
+        nav.append(Btn("➡️", callback_data=f"EM:{scope}:p:{page + 1}"))
     rows.append(nav)
-    rows.append([Btn("✨ Positive set", callback_data=f"EM:a:{page}"),
-                 Btn("↩️ Default", callback_data=f"EM:r:{page}")])
-    rows.append([Btn("✅ Done", callback_data="EM:d")])
+    rows.append([Btn("✨ Positive set", callback_data=f"EM:{scope}:a:{page}"),
+                 Btn("↩️ Default" if scope == "g" else "↩️ Main list", callback_data=f"EM:{scope}:r:{page}")])
+    rows.append([Btn("✅ Done", callback_data=f"EM:{scope}:d")])
     return Markup(rows)
 
 
-def emoji_text():
+def emoji_text(scope="g"):
+    cur = get_list(scope)
+    where = "**all chats**" if scope == "g" else f"chat `{scope}`" + ("" if scope in chat_emojis else " (now uses the main list)")
     return (
-        "**😀 Choose reaction emojis**\n\n"
+        f"**😀 Choose reaction emojis for** {where}\n\n"
         "Tap an emoji to select / unselect it. ✔ = selected.\n"
-        f"**Selected ({len(pool)}) :** {show(pool)}\n\nTap **Done** to save."
+        f"**Selected ({len(cur)}) :** {show(cur)}\n\nTap **Done** to save."
     )
 
 
@@ -414,32 +494,35 @@ async def cmd_panel(client, message):
 
 
 async def cb_emoji(client, query):
-    global pool
     parts = query.data.split(":")
-    act, page = parts[1], 0
+    scope = "g" if parts[1] == "g" else int(parts[1])
+    act, page = parts[2], 0
     if act == "n":
         return await query.answer()
     if act == "d":
         note = "" if await persist() else "\n\n⚠️ Not saved permanently (set `MONGO_URL`)."
-        await query.message.edit_text(f"✅ **Saved {len(pool)} emoji(s) :** {show(pool)}{note}")
+        cur = get_list(scope)
+        await query.message.edit_text(f"✅ **Saved {len(cur)} emoji(s) :** {show(cur)}{note}")
         return await query.answer()
     if act == "t":
-        e, page = ALLOWED[int(parts[2])], int(parts[3])
-        if e in pool:
-            if len(pool) == 1:
+        e, page = ALLOWED[int(parts[3])], int(parts[4])
+        cur = list(get_list(scope))
+        if e in cur:
+            if len(cur) == 1:
                 return await query.answer("Keep at least one emoji.", show_alert=True)
-            pool = [x for x in pool if x != e]
+            cur.remove(e)
         else:
-            pool = pool + [e]
+            cur.append(e)
+        set_list(scope, cur)
     elif act == "p":
-        page = int(parts[2])
+        page = int(parts[3])
     elif act == "a":
-        pool, page = list(POSITIVE), int(parts[2])
+        set_list(scope, list(POSITIVE)); page = int(parts[3])
     elif act == "r":
-        pool, page = list(DEFAULT_POOL), int(parts[2])
+        set_list(scope, list(DEFAULT_POOL) if scope == "g" else None); page = int(parts[3])
     await query.answer()
     try:
-        await query.message.edit_text(emoji_text(), reply_markup=emoji_markup(page))
+        await query.message.edit_text(emoji_text(scope), reply_markup=emoji_markup(page, scope))
     except errors.MessageNotModified:
         pass
 
@@ -504,6 +587,7 @@ async def put(client, chat, msg_id, emoji):
 async def react_link(client, chat, msg_id, emojis, source=None):
     for emoji in emojis:
         if await put(client, chat, msg_id, emoji):
+            bump(client, chat)
             return emoji
     allowed = await allowed_reactions(client, chat)  # ask the chat what it allows
     if allowed == []:
@@ -511,9 +595,10 @@ async def react_link(client, chat, msg_id, emojis, source=None):
     if allowed:
         for emoji in fit(allowed, client.idx, len(TOKENS), source):
             if emoji not in emojis and await put(client, chat, msg_id, emoji):
+                bump(client, chat)
                 return emoji
         raise NoReaction("that chat allows only " + show(allowed[:10]))
-    raise NoReaction("Telegram refused these emojis")
+    raise NoReaction("Telegram refused these emojis", hard=False)
 
 
 async def cmd_link(client, message):
@@ -524,10 +609,11 @@ async def cmd_link(client, message):
     lines, hard = [], False
     for chat, msg_id in links:
         ok, errs = 0, []
+        own = custom or chat_emojis.get(await chat_key(client, chat)) or None
         for bot in CLIENTS:
-            emojis = pick(chat, msg_id, bot.idx, len(TOKENS), force=True, source=custom)
+            emojis = pick(chat, msg_id, bot.idx, len(TOKENS), force=True, source=own)
             try:
-                await react_link(bot, chat, msg_id, emojis, custom or None)
+                await react_link(bot, chat, msg_id, emojis, own)
                 ok += 1
             except Exception as e:
                 errs.append(f"Bot {bot.idx + 1}: {e if isinstance(e, NoReaction) else type(e).__name__}")
@@ -539,6 +625,170 @@ async def cmd_link(client, message):
     await message.reply_text("\n".join(lines))
 
 
+_IDS = {}
+
+
+async def chat_key(client, ref):
+    """Numeric chat id for a link's chat (only looked up when chats have own emojis)."""
+    if isinstance(ref, int) or not chat_emojis:
+        return ref
+    if ref not in _IDS:
+        try:
+            _IDS[ref] = (await client.get_chat(ref)).id
+        except Exception:
+            _IDS[ref] = ref
+    return _IDS[ref]
+
+
+async def cmd_chatemoji(client, message):
+    """Own emojis for one chat. In the chat: /chatemoji [emojis|reset]. In DM: /chatemoji target [emojis|reset]."""
+    args = (message.text or "").split(None, 2)
+    if message.chat.type == enums.ChatType.PRIVATE:
+        if len(args) < 2:
+            return await message.reply_text(
+                "Use : `/chatemoji @channel` (tap) or `/chatemoji chat_id 🔥 ❤️` or `/chatemoji post_link reset`")
+        try:
+            chat = await resolve_chat(client, args[1])
+        except Exception:
+            return await message.reply_text("Chat not found. Use a chat id, @username or a post link.")
+        rest = args[2] if len(args) > 2 else ""
+    else:
+        chat, rest = message.chat.id, " ".join(args[1:])
+    if rest.strip().lower() == "reset":
+        chat_emojis.pop(chat, None)
+        await persist()
+        return await message.reply_text(f"✅ Chat `{chat}` uses the main emoji list again.")
+    emojis = extract(rest)
+    if emojis:
+        chat_emojis[chat] = emojis
+        note = "" if await persist() else "\n\n⚠️ Not saved permanently (set `MONGO_URL`)."
+        return await message.reply_text(f"✅ **Chat** `{chat}` **:** {show(emojis)}{note}")
+    if rest.strip():
+        return await message.reply_text("No allowed emoji found. Example : `/chatemoji 🔥 ❤️ 👍`")
+    await message.reply_text(emoji_text(chat), reply_markup=emoji_markup(0, chat))
+
+
+async def cmd_chatemojis(client, message):
+    if not chat_emojis:
+        return await message.reply_text("No chat has its own emojis. Set one with /chatemoji")
+    rows = [f"`{c}` : {show(e[:8])}" + (" …" if len(e) > 8 else "") for c, e in chat_emojis.items()]
+    await message.reply_text("**Chats with own emojis :**\n\n" + "\n".join(rows[:60]))
+
+
+async def cmd_allow(client, message):
+    """Co-owners can use the bot (owner only)."""
+    cmd = message.command[0]
+    if cmd == "allowed":
+        ids = [OWNER_ID] + sorted(co_owners)
+        return await message.reply_text("**Allowed users :**\n" + "\n".join(f"• `{u}`" + (" (owner)" if u == OWNER_ID else "") for u in ids))
+    try:
+        uid = int(message.command[1])
+    except Exception:
+        return await message.reply_text(f"Use : `/{cmd} user_id`")
+    if uid == OWNER_ID:
+        return await message.reply_text("That is the owner already.")
+    if cmd == "allow":
+        co_owners.add(uid)
+    elif uid in ENV_ALLOWED:
+        return await message.reply_text("That id is in the `ALLOWED_USERS` variable. Remove it there.")
+    else:
+        co_owners.discard(uid)
+    await persist()
+    await message.reply_text(f"✅ `{uid}` {'can use the bot now' if cmd == 'allow' else 'removed'}.")
+
+
+def _clean(x):
+    return "".join(c for c in str(x) if c not in "*_`[]<>~|")
+
+
+async def cmd_stats(client, message):
+    up = int(time.time() - STARTED)
+    bots = " • ".join(f"Bot {int(k) + 1}: {v}" for k, v in sorted(stats["bots"].items(), key=lambda kv: int(kv[0])))
+    top = sorted(stats["chats"].items(), key=lambda kv: -kv[1])[:5]
+    rows = [f"{i}. {_clean(stats['titles'].get(c, c))} : {n}" for i, (c, n) in enumerate(top, 1)]
+    await message.reply_text(
+        "📊 **Stats**\n\n"
+        f"**Reactions :** {stats['total']}\n"
+        f"**Bots running :** {len(CLIENTS)}/{len(TOKENS)}" + (f"\n{bots}" if bots else "") + "\n"
+        f"**Chats counted :** {len(stats['chats'])}\n"
+        f"**Running for :** {up // 86400}d {up % 86400 // 3600}h {up % 3600 // 60}m"
+        + ("\n\n**Top chats**\n" + "\n".join(rows) if rows else "")
+    )
+
+
+SKIP = tuple(getattr(errors, n) for n in ("MessageIdInvalid", "MessageNotFound") if hasattr(errors, n))
+
+
+async def range_bot(bot, chat, start, count, remove, source):
+    """One bot: react on (or remove its reaction from) posts start, start-1, ..."""
+    done = skipped = 0
+    err = None
+    for k in range(count):
+        mid = start - k
+        if mid < 1:
+            break
+        try:
+            if remove:
+                await bot.send_reaction(chat_id=chat, message_id=mid)
+            else:
+                await react_link(bot, chat, mid, pick(chat, mid, bot.idx, len(TOKENS), force=True, source=source), source)
+            done += 1
+        except SKIP:  # deleted post
+            skipped += 1
+        except NoReaction as e:
+            if e.hard:
+                err = str(e)
+                break
+            skipped += 1
+        except Exception as e:
+            err = type(e).__name__
+            break
+        if k < count - 1:
+            await asyncio.sleep(GAP)
+    return done, skipped, err
+
+
+async def range_work(client, status, chat, start, count, remove, custom):
+    try:
+        source = custom or chat_emojis.get(await chat_key(client, chat)) or None
+        res = await asyncio.gather(*(range_bot(b, chat, start, count, remove, source) for b in CLIENTS))
+        lines = [f"{'🧹 Removed' if remove else '✅ Reacted'} on `{chat}` posts {start} → {max(start - count + 1, 1)}\n"]
+        for bot, (done, skipped, err) in zip(CLIENTS, res):
+            lines.append(f"Bot {bot.idx + 1}: {done} done" + (f", {skipped} skipped" if skipped else "") + (f"\n   ⚠️ {err}" if err else ""))
+        if any(err and err not in ("FloodWait",) and not err.startswith(("reactions", "that chat")) for _, _, err in res):
+            lines.append("\nBots must be members/admins of that chat.")
+        await status.edit_text("\n".join(lines))
+    except Exception as e:
+        await status.edit_text(f"❌ {type(e).__name__}")
+
+
+async def cmd_range(client, message):
+    """/last post_link [N]  - react on that post and the N-1 before it.  /remove post_link [N] - take the reactions back."""
+    remove = message.command[0] == "remove"
+    links = parse_links(message.text)
+    if not links:
+        return await message.reply_text(
+            f"Use : `/{message.command[0]} https://t.me/channel/123 10`\n"
+            "Send the link of the **newest** post, then how many posts (max 50).")
+    nums = [int(x) for x in message.command[1:] if x.isdigit()]
+    count = max(1, min(nums[0] if nums else (1 if remove else 10), 50))
+    chat, start = links[0]
+    custom = [] if remove else extract(LINK_RE.sub(" ", message.text))
+    status = await message.reply_text(f"⏳ {'Removing' if remove else 'Reacting on'} {count} post(s)...")
+    task = asyncio.create_task(range_work(client, status, chat, start, count, remove, custom))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+
+
+async def stats_loop():
+    global dirty
+    while True:
+        await asyncio.sleep(300)
+        if dirty and MONGO_URL:
+            dirty = False
+            await persist()
+
+
 # ------------------------------------------------------------------- startup
 def attach(client, idx):
     client.idx = idx
@@ -546,18 +796,22 @@ def attach(client, idx):
     if PRIVATE_MODE:
         client.add_handler(ChatMemberUpdatedHandler(guard))
     if idx == 0:
-        me = filters.user(OWNER_ID)
-        dm = filters.private & me
+        dm = filters.private & ADMIN
         add = client.add_handler
         add(MessageHandler(cmd_info, filters.command(["start", "help", "emojis"]) & dm))
         add(MessageHandler(cmd_set, filters.command("setemoji") & dm))
         add(MessageHandler(cmd_panel, filters.command("emoji") & dm))
-        add(CallbackQueryHandler(cb_emoji, filters.regex(r"^EM:") & me))
-        add(MessageHandler(private_notice, filters.private & ~me))
+        add(CallbackQueryHandler(cb_emoji, filters.regex(r"^EM:") & ADMIN))
+        add(MessageHandler(private_notice, filters.private & ~ADMIN))
         add(MessageHandler(cmd_reset, filters.command("resetemoji") & dm))
         add(MessageHandler(cmd_chance, filters.command("chance") & dm))
         add(MessageHandler(cmd_delay, filters.command("delay") & dm))
-        add(MessageHandler(cmd_onoff, filters.command(["on", "off"]) & (filters.private | filters.group) & me))
+        add(MessageHandler(cmd_onoff, filters.command(["on", "off"]) & (filters.private | filters.group) & ADMIN))
+        add(MessageHandler(cmd_chatemoji, filters.command("chatemoji") & (filters.private | filters.group) & ADMIN))
+        add(MessageHandler(cmd_chatemojis, filters.command("chatemojis") & dm))
+        add(MessageHandler(cmd_stats, filters.command("stats") & dm))
+        add(MessageHandler(cmd_range, filters.command(["last", "remove"]) & dm))
+        add(MessageHandler(cmd_allow, filters.command(["allow", "disallow", "allowed"]) & filters.private & OWNER))
         add(MessageHandler(cmd_link, dm & filters.text & ~filters.regex(r"^/")))
 
 
@@ -577,7 +831,11 @@ async def main():
     if not CLIENTS:
         raise SystemExit("No bot could start. Check BOT_TOKEN.")
     print(f"Running with {len(CLIENTS)} bot(s), {len(pool)} emojis.", flush=True)
+    saver = asyncio.create_task(stats_loop())
     await idle()
+    saver.cancel()
+    if dirty:
+        await persist()
     for client in CLIENTS:
         await client.stop()
 
